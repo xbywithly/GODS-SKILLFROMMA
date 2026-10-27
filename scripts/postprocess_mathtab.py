@@ -34,13 +34,14 @@ def format_equation_pPr(pPr):
     jc.set(f"{{{W_NS}}}val", "left")
 
     # 3. Line spacing atLeast 22pt (440 dxa) to prevent formula vertical clipping
+    # Paragraph spacing before=0, after=0 for tight, natural vertical layout
     spacing = pPr.find(f"{{{W_NS}}}spacing")
     if spacing is None:
         spacing = ET.SubElement(pPr, f"{{{W_NS}}}spacing")
     spacing.set(f"{{{W_NS}}}line", "440")
     spacing.set(f"{{{W_NS}}}lineRule", "atLeast")
-    spacing.set(f"{{{W_NS}}}before", "120")
-    spacing.set(f"{{{W_NS}}}after", "120")
+    spacing.set(f"{{{W_NS}}}before", "0")
+    spacing.set(f"{{{W_NS}}}after", "0")
 
     # 4. Standard MathTab tab stops: Center at 4540, Right at 9080
     tabs = pPr.find(f"{{{W_NS}}}tabs")
@@ -90,6 +91,12 @@ def postprocess_mathtab(doc_path):
     # Match equation paragraphs: has '(章节号-公式号)' e.g. (2-1), (3-4)
     eq_pattern = re.compile(r'\(\s*\d+\s*[-–]\s*\d+\s*\)')
 
+    def has_object(elem):
+        for sub in elem.iter():
+            if sub.tag.endswith('object'):
+                return True
+        return False
+
     for p in body.findall(f"{{{W_NS}}}p"):
         p_text = "".join(p.itertext()).strip()
         if eq_pattern.search(p_text):
@@ -100,7 +107,43 @@ def postprocess_mathtab(doc_path):
             format_equation_pPr(pPr)
             eq_count += 1
 
+    # Cleanup extraneous half-width space runs around inline formulas in Chinese paragraphs
+    for p in root.iter(f"{{{W_NS}}}p"):
+        p_text = "".join(p.itertext())
+        if any('\u4e00' <= ch <= '\u9fff' for ch in p_text):
+            runs = list(p.findall(f"{{{W_NS}}}r"))
+            for idx, r in enumerate(runs):
+                t_elem = r.find(f"{{{W_NS}}}t")
+                if t_elem is not None and t_elem.text == ' ':
+                    has_prev = (idx > 0 and has_object(runs[idx-1]))
+                    has_next = (idx < len(runs)-1 and has_object(runs[idx+1]))
+                    if has_prev or has_next:
+                        if r in p:
+                            p.remove(r)
+                elif t_elem is not None and t_elem.text:
+                    if idx > 0 and has_object(runs[idx-1]):
+                        t_elem.text = t_elem.text.lstrip(' ')
+                    if idx < len(runs)-1 and has_object(runs[idx+1]):
+                        t_elem.text = t_elem.text.rstrip(' ')
+
     tree.write(doc_xml_path, xml_declaration=True, encoding="utf-8")
+
+    # Also update word/styles.xml if MTDisplayEquation style exists
+    styles_xml_path = os.path.join(temp_dir, "word", "styles.xml")
+    if os.path.exists(styles_xml_path):
+        with open(styles_xml_path, 'r', encoding='utf-8') as f:
+            s_content = f.read()
+        pattern = r'(<w:style[^>]*w:styleId="MTDisplayEquation"[^>]*>.*?<w:spacing\s+)([^/]*)(/>)'
+        def repl_spacing(m):
+            prefix = m.group(1)
+            sp_attrs = m.group(2)
+            sp_attrs = re.sub(r'w:before="\d+"', 'w:before="0"', sp_attrs)
+            sp_attrs = re.sub(r'w:after="\d+"', 'w:after="0"', sp_attrs)
+            return prefix + sp_attrs + m.group(3)
+        new_s_content = re.sub(pattern, repl_spacing, s_content, flags=re.DOTALL)
+        if new_s_content != s_content:
+            with open(styles_xml_path, 'w', encoding='utf-8') as f:
+                f.write(new_s_content)
 
     # Repack zip into docx
     backup_path = doc_path + ".bak"

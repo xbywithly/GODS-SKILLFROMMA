@@ -104,6 +104,54 @@ def create_standard_flowchart_figure():
     plt.tight_layout(pad=0.1)
     return fig, ax
 
+def create_standard_grouped_bar_figure():
+    """
+    Example 3: Academic grouped bar chart.
+    Avoids redundant/overlapping text above narrow adjacent bars.
+    Relies on precise y-axis ticks and clean legend.
+    """
+    setup_thesis_plot_style()
+    
+    fig, ax = plt.subplots(figsize=(3.4, 2.7))
+    x = np.arange(4)
+    width = 0.22
+    prec = [98.1, 97.8, 98.6, 97.4]
+    rec  = [98.2, 97.6, 98.8, 97.1]
+    f1   = [98.1, 97.7, 98.7, 97.2]
+    
+    ax.bar(x - width, prec, width, label='精确率', color='#222222', edgecolor='k')
+    ax.bar(x, rec, width, label='召回率', color='#777777', edgecolor='k')
+    ax.bar(x + width, f1, width, label='F1得分', color='#CCCCCC', edgecolor='k')
+    
+    ax.set_xticks(x)
+    ax.set_xticklabels([r'$S_1$', r'$S_2$', r'$S_3$', r'$S_4$'], fontsize=10.0)
+    ax.set_ylabel(r'$\mathrm{Score}\ /\ (\%)$', fontsize=10.5)
+    ax.set_ylim(92, 105.0)
+    ax.grid(True, linestyle=':', linewidth=0.5, color='#CCCCCC', alpha=0.7)
+    ax.legend(loc='upper center', ncol=3, fontsize=8.0, framealpha=1.0, edgecolor='#000000',
+              fancybox=False, handletextpad=0.3, columnspacing=0.8)
+    
+    plt.tight_layout(pad=0.1)
+    return fig, ax
+
+def pad_figures_to_identical_canvas(path_a, path_b):
+    """
+    Helper function: Pads two horizontal subfigures onto an identical canvas
+    so that side-by-side display in Word table cells has 100% identical aspect ratio and dimensions.
+    """
+    from PIL import Image
+    ima = Image.open(path_a)
+    imb = Image.open(path_b)
+    tw = max(ima.size[0], imb.size[0]) + 60
+    th = max(ima.size[1], imb.size[1]) + 60
+    def pad(im):
+        c = Image.new('RGB', (tw, th), (255, 255, 255))
+        c.paste(im, ((tw - im.size[0]) // 2, (th - im.size[1]) // 2))
+        return c
+    pad(ima).save(path_a, dpi=(600, 600))
+    pad(imb).save(path_b, dpi=(600, 600))
+    print(f"Unified horizontal paired figures to canvas: ({tw}, {th})")
+
 if __name__ == "__main__":
     fig1, _ = create_standard_curve_figure()
     fig1.savefig("demo_curve.png", dpi=350, bbox_inches="tight", pad_inches=0.02)
@@ -112,3 +160,7 @@ if __name__ == "__main__":
     fig2, _ = create_standard_flowchart_figure()
     fig2.savefig("demo_flowchart.png", dpi=350, bbox_inches="tight", pad_inches=0.02)
     print("Demo flowchart saved.")
+
+    fig3, _ = create_standard_grouped_bar_figure()
+    fig3.savefig("demo_bar.png", dpi=350, bbox_inches="tight", pad_inches=0.02)
+    print("Demo grouped bar chart saved.")
