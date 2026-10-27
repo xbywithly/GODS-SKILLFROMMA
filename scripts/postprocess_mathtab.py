@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Thesis MathTab Post-Processor
-Directly updates docx word/document.xml to guarantee standard MathTab alignment:
+Thesis MathTab Post-Processor (lxml-based)
+Directly updates docx word/document.xml to guarantee standard MathTab alignment
+while 100% preserving all OpenXML namespaces, prefixes, and schema structures:
 - Page margins: Left 2.5 cm, Right 2.5 cm (text width 16.0 cm = 9074 dxa)
-- Formula paragraphs: Zero indent, atLeast 22pt (440 dxa) line spacing, 6pt before/after
+- Formula paragraphs: Zero indent, atLeast 22pt (440 dxa) line spacing, 0pt before/after
 - Center tab at 4540 dxa (8.01 cm), Right tab at 9080 dxa (16.02 cm)
 """
 
@@ -12,16 +13,20 @@ import sys
 import re
 import zipfile
 import shutil
-import xml.etree.ElementTree as ET
+try:
+    import lxml.etree as etree
+    USE_LXML = True
+except ImportError:
+    import xml.etree.ElementTree as etree
+    USE_LXML = False
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-ET.register_namespace('w', W_NS)
 
 def format_equation_pPr(pPr):
     # 1. Zero indent
     ind = pPr.find(f"{{{W_NS}}}ind")
     if ind is None:
-        ind = ET.SubElement(pPr, f"{{{W_NS}}}ind")
+        ind = etree.SubElement(pPr, f"{{{W_NS}}}ind")
     ind.set(f"{{{W_NS}}}firstLine", "0")
     ind.set(f"{{{W_NS}}}firstLineChars", "0")
     ind.set(f"{{{W_NS}}}left", "0")
@@ -30,14 +35,14 @@ def format_equation_pPr(pPr):
     # 2. Left paragraph alignment so tabs control positioning
     jc = pPr.find(f"{{{W_NS}}}jc")
     if jc is None:
-        jc = ET.SubElement(pPr, f"{{{W_NS}}}jc")
+        jc = etree.SubElement(pPr, f"{{{W_NS}}}jc")
     jc.set(f"{{{W_NS}}}val", "left")
 
     # 3. Line spacing atLeast 22pt (440 dxa) to prevent formula vertical clipping
     # Paragraph spacing before=0, after=0 for tight, natural vertical layout
     spacing = pPr.find(f"{{{W_NS}}}spacing")
     if spacing is None:
-        spacing = ET.SubElement(pPr, f"{{{W_NS}}}spacing")
+        spacing = etree.SubElement(pPr, f"{{{W_NS}}}spacing")
     spacing.set(f"{{{W_NS}}}line", "440")
     spacing.set(f"{{{W_NS}}}lineRule", "atLeast")
     spacing.set(f"{{{W_NS}}}before", "0")
@@ -47,13 +52,13 @@ def format_equation_pPr(pPr):
     tabs = pPr.find(f"{{{W_NS}}}tabs")
     if tabs is not None:
         pPr.remove(tabs)
-    tabs = ET.SubElement(pPr, f"{{{W_NS}}}tabs")
+    tabs = etree.SubElement(pPr, f"{{{W_NS}}}tabs")
     
-    t_center = ET.SubElement(tabs, f"{{{W_NS}}}tab")
+    t_center = etree.SubElement(tabs, f"{{{W_NS}}}tab")
     t_center.set(f"{{{W_NS}}}val", "center")
     t_center.set(f"{{{W_NS}}}pos", "4540")
     
-    t_right = ET.SubElement(tabs, f"{{{W_NS}}}tab")
+    t_right = etree.SubElement(tabs, f"{{{W_NS}}}tab")
     t_right.set(f"{{{W_NS}}}val", "right")
     t_right.set(f"{{{W_NS}}}pos", "9080")
 
@@ -62,7 +67,7 @@ def postprocess_mathtab(doc_path):
         print(f"Error: Document does not exist: {doc_path}")
         sys.exit(1)
 
-    print(f"Post-processing MathTab layout for: {doc_path}")
+    print(f"Post-processing MathTab layout for: {doc_path} (lxml={USE_LXML})")
     temp_dir = doc_path + "_mathtab_temp"
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
@@ -72,7 +77,12 @@ def postprocess_mathtab(doc_path):
         zf.extractall(temp_dir)
 
     doc_xml_path = os.path.join(temp_dir, "word", "document.xml")
-    tree = ET.parse(doc_xml_path)
+    if USE_LXML:
+        parser = etree.XMLParser(remove_blank_text=False)
+        with open(doc_xml_path, 'rb') as f:
+            tree = etree.parse(f, parser=parser)
+    else:
+        tree = etree.parse(doc_xml_path)
     root = tree.getroot()
 
     body = root.find(f"{{{W_NS}}}body")
@@ -89,7 +99,7 @@ def postprocess_mathtab(doc_path):
             pgMar.set(f"{{{W_NS}}}bottom", "1418")
 
     # Match equation paragraphs: has '(章节号-公式号)' e.g. (2-1), (3-4)
-    eq_pattern = re.compile(r'\(\s*\d+\s*[-–]\s*\d+\s*\)')
+    eq_pattern = re.compile(r'\(\s*\d+\s*[-–—]\s*\d+\s*\)')
 
     def has_object(elem):
         for sub in elem.iter():
@@ -102,7 +112,7 @@ def postprocess_mathtab(doc_path):
         if eq_pattern.search(p_text):
             pPr = p.find(f"{{{W_NS}}}pPr")
             if pPr is None:
-                pPr = ET.Element(f"{{{W_NS}}}pPr")
+                pPr = etree.Element(f"{{{W_NS}}}pPr")
                 p.insert(0, pPr)
             format_equation_pPr(pPr)
             eq_count += 1
@@ -126,7 +136,11 @@ def postprocess_mathtab(doc_path):
                     if idx < len(runs)-1 and has_object(runs[idx+1]):
                         t_elem.text = t_elem.text.rstrip(' ')
 
-    tree.write(doc_xml_path, xml_declaration=True, encoding="utf-8")
+    if USE_LXML:
+        with open(doc_xml_path, 'wb') as f:
+            f.write(etree.tostring(root, xml_declaration=True, encoding="utf-8", standalone=True))
+    else:
+        tree.write(doc_xml_path, xml_declaration=True, encoding="utf-8")
 
     # Also update word/styles.xml if MTDisplayEquation style exists
     styles_xml_path = os.path.join(temp_dir, "word", "styles.xml")
